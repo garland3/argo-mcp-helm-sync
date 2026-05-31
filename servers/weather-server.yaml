@@ -1,0 +1,24 @@
+# Second example MCP server -- demonstrates a different registry, env-specific
+# scaling via the ApplicationSet, and a server with only one secret.
+nameOverride: weather-server
+
+image:
+  registry: quay.io/acme
+  repository: mcp/weather
+  tag: "0.9.0"
+
+extraEnv:
+  LOG_LEVEL: debug
+  MCP_TRANSPORT: streamable-http
+  WEATHER_UNITS: metric
+
+secretEnv:
+  WEATHER_API_KEY: "<path:{{vault}}/weather-server#api_key>"
+
+service:
+  enabled: true
+  port: 8080
+  targetPort: 8080
+
+route:
+  enabled: true

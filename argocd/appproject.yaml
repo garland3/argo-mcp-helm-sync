@@ -1,0 +1,21 @@
+# Argo CD AppProject that scopes what the generated MCP Applications may do.
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: mcp-servers
+  namespace: openshift-gitops
+spec:
+  description: MCP servers (prod + qual) deployed from the shared Helm chart.
+  sourceRepos:
+    - https://github.com/garland3/argo-mcp-helm-sync.git
+  destinations:
+    - server: https://kubernetes.default.svc
+      namespace: mcp-prod
+    - server: https://kubernetes.default.svc
+      namespace: mcp-qual
+  clusterResourceWhitelist:
+    - group: ""
+      kind: Namespace
+  namespaceResourceWhitelist:
+    - group: "*"
+      kind: "*"

@@ -1,0 +1,130 @@
+# =============================================================================
+# Default values for the reusable mcp-server chart.
+#
+# These are the SAFE defaults. Each MCP server overrides what it needs in
+# servers/<name>.yaml, and the ApplicationSet injects the environment-specific
+# bits (env name, vault path prefix, replicas, etc.) at render time.
+#
+# Anything written as <path:...#key> is NOT resolved by Helm. It is left
+# verbatim in the rendered manifest and resolved at Argo sync time by the
+# Argo CD Vault Plugin (AVP), which pulls the value from HashiCorp Vault.
+# =============================================================================
+
+# Logical name of this MCP server. Defaults to the chart fullname; servers
+# normally set this in servers/<name>.yaml.
+nameOverride: ""
+fullnameOverride: ""
+
+# -----------------------------------------------------------------------------
+# Environment context.
+# The ApplicationSet sets `env.name` (prod|qual) and `env.vaultMount` so the
+# same chart renders a prod and a qual instance with correctly-routed secrets.
+# -----------------------------------------------------------------------------
+env:
+  # prod | qual  -- injected by the ApplicationSet generator.
+  name: qual
+  # Vault KV-v2 mount + path prefix for THIS environment. The ApplicationSet
+  # composes this from the env name so secrets auto-route, e.g.:
+  #   prod -> secret/data/mcp/prod
+  #   qual -> secret/data/mcp/qual
+  vaultMount: "secret/data/mcp/qual"
+
+# -----------------------------------------------------------------------------
+# Container image. registry + repository + tag are kept separate so a server
+# can switch container registries without touching anything else.
+# -----------------------------------------------------------------------------
+image:
+  registry: "registry.example.com"
+  repository: "mcp/example-server"
+  tag: "latest"
+  pullPolicy: IfNotPresent
+# Name of an existing imagePullSecret (optional). Can itself be vault-backed.
+imagePullSecrets: []
+#  - name: registry-creds
+
+replicaCount: 1
+
+# -----------------------------------------------------------------------------
+# Plain (non-secret) environment variables. Rendered straight into the
+# container env.
+# -----------------------------------------------------------------------------
+extraEnv: {}
+#  LOG_LEVEL: info
+#  MCP_TRANSPORT: stdio
+
+# -----------------------------------------------------------------------------
+# Secret environment variables.
+#
+# Each entry's value is a Vault reference. Use the literal token "{{vault}}"
+# as a stand-in for the per-environment Vault prefix -- the chart substitutes
+# env.vaultMount for it. This is what gives you automatic prod/qual routing:
+#
+#   secretEnv:
+#     OPENAI_API_KEY: "<path:{{vault}}/example-server#openai_api_key>"
+#
+# renders for qual as:
+#   <path:secret/data/mcp/qual/example-server#openai_api_key>
+# and for prod as:
+#   <path:secret/data/mcp/prod/example-server#openai_api_key>
+#
+# AVP resolves the <path:...> at sync time into a real Secret.
+# -----------------------------------------------------------------------------
+secretEnv: {}
+#  OPENAI_API_KEY: "<path:{{vault}}/example-server#openai_api_key>"
+#  DB_PASSWORD: "<path:{{vault}}/example-server#db_password>"
+
+# -----------------------------------------------------------------------------
+# Service / networking
+# -----------------------------------------------------------------------------
+service:
+  enabled: true
+  type: ClusterIP
+  port: 8080
+  targetPort: 8080
+
+# OpenShift Route (preferred over Ingress on OCP).
+route:
+  enabled: false
+  # host is usually env-specific; leave empty to let OpenShift assign one.
+  host: ""
+  tls:
+    enabled: true
+    termination: edge
+
+# -----------------------------------------------------------------------------
+# Pod resources / scheduling
+# -----------------------------------------------------------------------------
+resources:
+  requests:
+    cpu: 50m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
+
+# Probes. Disable if your MCP server has no HTTP health endpoint.
+probes:
+  enabled: true
+  path: /healthz
+  port: 8080
+
+# OpenShift-friendly pod security context (works with the restricted SCC;
+# do NOT pin runAsUser -- let OCP assign one from the namespace range).
+podSecurityContext:
+  runAsNonRoot: true
+  seccompProfile:
+    type: RuntimeDefault
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop:
+      - ALL
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+# Extra labels/annotations applied to all resources.
+commonLabels: {}
+commonAnnotations: {}

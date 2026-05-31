@@ -1,0 +1,51 @@
+# =============================================================================
+# Per-MCP-server config.
+#
+# Drop a new file like this into servers/ and the ApplicationSet will
+# automatically create a prod AND a qual Argo Application for it -- no edits
+# to the ApplicationSet required.
+#
+# Everything here is passed to the reusable chart/ as Helm values. The
+# ApplicationSet additionally injects env.name and env.vaultMount at render
+# time, so you do NOT set those here.
+#
+# Vault references: use the literal token {{vault}} as the per-env prefix.
+# It expands to secret/data/mcp/<env> automatically, e.g.
+#   <path:{{vault}}/example-server#openai_api_key>
+#     prod -> <path:secret/data/mcp/prod/example-server#openai_api_key>
+#     qual -> <path:secret/data/mcp/qual/example-server#openai_api_key>
+# =============================================================================
+
+# Used as the app name and the {{vault}} sub-path. Keep it DNS-safe.
+nameOverride: example-server
+
+image:
+  registry: registry.example.com
+  repository: mcp/example-server
+  tag: "1.4.2"
+
+replicaCount: 1
+
+extraEnv:
+  LOG_LEVEL: info
+  MCP_TRANSPORT: streamable-http
+
+secretEnv:
+  OPENAI_API_KEY: "<path:{{vault}}/example-server#openai_api_key>"
+  DB_PASSWORD: "<path:{{vault}}/example-server#db_password>"
+
+service:
+  enabled: true
+  port: 8080
+  targetPort: 8080
+
+route:
+  enabled: true
+  tls:
+    enabled: true
+    termination: edge
+
+probes:
+  enabled: true
+  path: /healthz
+  port: 8080

@@ -1,0 +1,107 @@
+# =============================================================================
+# ApplicationSet: generates one Argo CD Application per (MCP server x env).
+#
+# Matrix generator:
+#   * git files generator -> one set of params per servers/*.yaml file
+#       (the file is parsed, so {{nameOverride}} etc. are available, plus
+#        {{path.filenameNormalized}} = filename without extension)
+#   * list generator      -> [prod, qual]
+#
+# Result: example-server.yaml  ->  example-server-prod  +  example-server-qual
+#
+# Each Application renders the SHARED chart/ with:
+#   - the server's own values file (servers/<name>.yaml)
+#   - inline parameter overrides that inject the env name + the per-env Vault
+#     mount, giving automatic prod/qual secret routing.
+#
+# Secrets: the chart emits <path:...> tokens; the Argo CD Vault Plugin (AVP)
+# resolves them from HashiCorp Vault at sync time (see cmp-plugin.yaml).
+# =============================================================================
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: mcp-servers
+  namespace: openshift-gitops
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  generators:
+    - matrix:
+        generators:
+          # ---- 1. One entry per MCP server config file -------------------
+          - git:
+              repoURL: https://github.com/garland3/argo-mcp-helm-sync.git
+              revision: main
+              files:
+                - path: "servers/*.yaml"
+          # ---- 2. The environments to fan out to -------------------------
+          - list:
+              elements:
+                - env: prod
+                  # Vault KV-v2 mount/prefix for this environment.
+                  vaultMount: "secret/data/mcp/prod"
+                  replicas: "2"
+                  destNamespace: "mcp-prod"
+                  # Only sync prod from a release branch / after promotion.
+                  autoSync: "false"
+                - env: qual
+                  vaultMount: "secret/data/mcp/qual"
+                  replicas: "1"
+                  destNamespace: "mcp-qual"
+                  autoSync: "true"
+  template:
+    metadata:
+      # e.g. mcp-example-server-prod
+      name: "mcp-{{.nameOverride}}-{{.env}}"
+      labels:
+        mcp.platform/server: "{{.nameOverride}}"
+        mcp.platform/environment: "{{.env}}"
+      annotations:
+        argocd.argoproj.io/manifest-generate-paths: ".;/chart"
+    spec:
+      project: mcp-servers
+      source:
+        repoURL: https://github.com/garland3/argo-mcp-helm-sync.git
+        targetRevision: main
+        path: chart
+        plugin:
+          # Use the AVP-wrapped Helm CMP so <path:...> tokens get resolved.
+          name: argocd-vault-plugin-helm
+          env:
+            - name: HELM_ARGS
+              value: >-
+                --values ../servers/{{.path.filename}}
+                --set env.name={{.env}}
+                --set env.vaultMount={{.vaultMount}}
+                --set replicaCount={{.replicas}}
+            # Tell AVP which Vault backend + auth to use (KV v2).
+            - name: AVP_TYPE
+              value: vault
+            - name: AVP_AUTH_TYPE
+              value: k8s
+            - name: AVP_K8S_ROLE
+              value: "argocd-{{.env}}"
+      destination:
+        server: https://kubernetes.default.svc
+        namespace: "{{.destNamespace}}"
+      syncPolicy:
+        syncOptions:
+          - CreateNamespace=true
+          - ServerSideApply=true
+        retry:
+          limit: 5
+          backoff:
+            duration: 5s
+            factor: 2
+            maxDuration: 3m
+  # templatePatch lets us apply *structural* conditionals (whole YAML blocks)
+  # that the static `template:` above cannot. Here: qual self-heals, while
+  # prod is gated (manual sync / promotion) by omitting `automated`.
+  templatePatch: |
+    spec:
+      syncPolicy:
+        {{- if eq .autoSync "true" }}
+        automated:
+          prune: true
+          selfHeal: true
+        {{- end }}
