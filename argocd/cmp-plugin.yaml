@@ -1,0 +1,68 @@
+# =============================================================================
+# Config Management Plugin (CMP) for Argo CD that runs Helm template and then
+# pipes the output through the Argo CD Vault Plugin (AVP) to resolve <path:...>
+# tokens from HashiCorp Vault.
+#
+# This ConfigMap is mounted into a sidecar of the argocd-repo-server. On
+# OpenShift GitOps you add the sidecar to the ArgoCD CR (see comment at bottom).
+# =============================================================================
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cmp-plugin
+  namespace: openshift-gitops
+data:
+  avp-helm.yaml: |
+    apiVersion: argoproj.io/v1alpha1
+    kind: ConfigManagementPlugin
+    metadata:
+      name: argocd-vault-plugin-helm
+    spec:
+      # Only handle directories that contain a Chart.yaml (our chart/).
+      discover:
+        fileName: "Chart.yaml"
+      init:
+        command: [sh, -c]
+        args: ["helm dependency build || true"]
+      generate:
+        command: [sh, -c]
+        # $ARGOCD_ENV_HELM_ARGS comes from the ApplicationSet template
+        # (Argo prefixes plugin env vars with ARGOCD_ENV_).
+        args:
+          - >-
+            helm template "$ARGOCD_APP_NAME"
+            --namespace "$ARGOCD_APP_NAMESPACE"
+            $ARGOCD_ENV_HELM_ARGS .
+            | argocd-vault-plugin generate -
+      lockRepo: false
+# -----------------------------------------------------------------------------
+# To register this sidecar with OpenShift GitOps, add to the ArgoCD CR:
+#
+#   spec:
+#     repo:
+#       sidecarContainers:
+#         - name: avp-helm
+#           image: quay.io/argoproj/argocd:v2.x  # or an image bundling AVP+helm
+#           command: [/var/run/argocd/argocd-cmp-server]
+#           env:
+#             - name: AVP_TYPE
+#               value: vault
+#             - name: VAULT_ADDR
+#               value: https://vault.example.com
+#           volumeMounts:
+#             - name: var-files
+#               mountPath: /var/run/argocd
+#             - name: plugins
+#               mountPath: /home/argocd/cmp-server/plugins
+#             - name: cmp-plugin
+#               mountPath: /home/argocd/cmp-server/config/plugin.yaml
+#               subPath: avp-helm.yaml
+#             - name: tmp
+#               mountPath: /tmp
+#       volumes:
+#         - name: cmp-plugin
+#           configMap:
+#             name: cmp-plugin
+#         - name: tmp
+#           emptyDir: {}
+# -----------------------------------------------------------------------------

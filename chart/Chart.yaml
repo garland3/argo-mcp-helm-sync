@@ -1,0 +1,13 @@
+apiVersion: v2
+name: mcp-server
+description: A single, reusable Helm chart for deploying MCP (Model Context Protocol) servers on OpenShift.
+type: application
+# Chart version (bump on template changes). appVersion is overridden per-server via values.image.tag.
+version: 0.1.0
+appVersion: "1.0.0"
+keywords:
+  - mcp
+  - openshift
+  - argocd
+maintainers:
+  - name: platform-team

@@ -1,0 +1,3 @@
+helm-*.tar.*
+*.tgz
+/charts/
