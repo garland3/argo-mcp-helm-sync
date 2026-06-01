@@ -1,0 +1,41 @@
+{{- if .Values.imageStream.enabled }}
+# =============================================================================
+# OpenShift ImageStream (optional).
+#
+# Tracks the upstream image (image.registry/repository:tag) under a local
+# ImageStreamTag named "<fullname>:<env|imageStream.tag>". The Deployment
+# carries an image.openshift.io/triggers annotation pointing at this istag, so
+# OpenShift auto-redeploys whenever a newer image is imported here.
+#
+# This wires up the classic "image stream" redeploy workflow for the
+# non-GitOps flow -- no Argo CD required.
+# =============================================================================
+apiVersion: image.openshift.io/v1
+kind: ImageStream
+metadata:
+  name: {{ include "mcp-server.fullname" . }}
+  labels:
+    {{- include "mcp-server.labels" . | nindent 4 }}
+  {{- with .Values.commonAnnotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  lookupPolicy:
+    # Keep false: the Deployment references the istag via the trigger annotation,
+    # not via local name resolution.
+    local: false
+  tags:
+    - name: {{ default .Values.env.name .Values.imageStream.tag | quote }}
+      from:
+        kind: DockerImage
+        name: {{ include "mcp-server.image" . | quote }}
+      referencePolicy:
+        type: Source
+      importPolicy:
+        scheduled: {{ .Values.imageStream.scheduledImport }}
+        importMode: {{ .Values.imageStream.importMode }}
+        {{- if .Values.imageStream.insecure }}
+        insecure: true
+        {{- end }}
+{{- end }}

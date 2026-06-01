@@ -1,5 +1,5 @@
 # Second example MCP server -- demonstrates a different registry, env-specific
-# scaling via the ApplicationSet, and a server with only one secret.
+# scaling, and a server with only one secret.
 nameOverride: weather-server
 
 image:
@@ -13,7 +13,7 @@ extraEnv:
   WEATHER_UNITS: metric
 
 secretEnv:
-  WEATHER_API_KEY: "<path:{{vault}}/weather-server#api_key>"
+  WEATHER_API_KEY: "<path:secret/data/mcp/{{namespace}}/weather-server#api_key>"
 
 service:
   enabled: true
