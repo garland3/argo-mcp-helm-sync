@@ -5,18 +5,19 @@
 # automatically create a prod AND a qual Argo Application for it -- no edits
 # to the ApplicationSet required.
 #
-# Everything here is passed to the reusable chart/ as Helm values. The
-# ApplicationSet additionally injects env.name and env.vaultMount at render
-# time, so you do NOT set those here.
+# Everything here is passed to the reusable chart/ as Helm values. The env
+# (env.name / env.namespace) is injected at render time -- by the ApplicationSet
+# (GitOps) or by `--set` from your CI pipeline (non-GitOps) -- so you do NOT set
+# it here.
 #
-# Vault references: use the literal token {{vault}} as the per-env prefix.
-# It expands to secret/data/mcp/<env> automatically, e.g.
-#   <path:{{vault}}/example-server#openai_api_key>
+# Vault references: use the literal token {{namespace}} for the per-env segment.
+# It expands to env.name (qual|prod) automatically, e.g.
+#   <path:secret/data/mcp/{{namespace}}/example-server#openai_api_key>
 #     prod -> <path:secret/data/mcp/prod/example-server#openai_api_key>
 #     qual -> <path:secret/data/mcp/qual/example-server#openai_api_key>
 # =============================================================================
 
-# Used as the app name and the {{vault}} sub-path. Keep it DNS-safe.
+# Used as the app name and the Vault sub-path. Keep it DNS-safe.
 nameOverride: example-server
 
 image:
@@ -31,8 +32,8 @@ extraEnv:
   MCP_TRANSPORT: streamable-http
 
 secretEnv:
-  OPENAI_API_KEY: "<path:{{vault}}/example-server#openai_api_key>"
-  DB_PASSWORD: "<path:{{vault}}/example-server#db_password>"
+  OPENAI_API_KEY: "<path:secret/data/mcp/{{namespace}}/example-server#openai_api_key>"
+  DB_PASSWORD: "<path:secret/data/mcp/{{namespace}}/example-server#db_password>"
 
 service:
   enabled: true

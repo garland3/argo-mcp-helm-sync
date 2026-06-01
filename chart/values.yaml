@@ -6,8 +6,10 @@
 # bits (env name, vault path prefix, replicas, etc.) at render time.
 #
 # Anything written as <path:...#key> is NOT resolved by Helm. It is left
-# verbatim in the rendered manifest and resolved at Argo sync time by the
-# Argo CD Vault Plugin (AVP), which pulls the value from HashiCorp Vault.
+# verbatim in the rendered manifest and resolved by the Argo CD Vault Plugin
+# (AVP), which pulls the value from HashiCorp Vault. AVP can run either inside
+# Argo CD (GitOps) OR standalone in your CI pipeline via `argocd-vault-plugin
+# generate` (non-GitOps -- see deploy/deploy.sh).
 # =============================================================================
 
 # Logical name of this MCP server. Defaults to the chart fullname; servers
@@ -17,16 +19,25 @@ fullnameOverride: ""
 
 # -----------------------------------------------------------------------------
 # Environment context.
-# The ApplicationSet sets `env.name` (prod|qual) and `env.vaultMount` so the
-# same chart renders a prod and a qual instance with correctly-routed secrets.
+# GitOps:     the ApplicationSet sets env.name + env.vaultMount per environment.
+# Non-GitOps: your CI passes `--set env.name=<env>` (and optionally
+#             `--set env.namespace=<seg>`); see deploy/deploy.sh.
+# Either way the same chart renders a prod and a qual instance with
+# correctly-routed secrets.
 # -----------------------------------------------------------------------------
 env:
-  # prod | qual  -- injected by the ApplicationSet generator.
+  # prod | qual  -- injected by the ApplicationSet (GitOps) or `--set` (CI).
   name: qual
-  # Vault KV-v2 mount + path prefix for THIS environment. The ApplicationSet
-  # composes this from the env name so secrets auto-route, e.g.:
+  # The segment substituted for the {{namespace}} token inside Vault paths,
+  # e.g. the "qual" in <path:secret/data/mcp/qual/...>. Leave empty to default
+  # to env.name. Set it only if your Vault path segment differs from env.name.
+  namespace: ""
+  # Full Vault KV-v2 mount + prefix, substituted for the legacy {{vault}} token.
+  # The ApplicationSet composes this from the env name so secrets auto-route:
   #   prod -> secret/data/mcp/prod
   #   qual -> secret/data/mcp/qual
+  # If you reference Vault with the {{namespace}} token instead (recommended for
+  # the non-GitOps flow), you can ignore this.
   vaultMount: "secret/data/mcp/qual"
 
 # -----------------------------------------------------------------------------
@@ -37,10 +48,36 @@ image:
   registry: "registry.example.com"
   repository: "mcp/example-server"
   tag: "latest"
+  # IfNotPresent is safe with immutable, unique tags (recommended: push a new
+  # tag per build, e.g. the commit SHA, so every deploy rolls automatically).
+  # Switch to Always if you re-push a mutable tag (e.g. "latest") and rely on
+  # `oc rollout restart` / podAnnotations to force a redeploy.
   pullPolicy: IfNotPresent
 # Name of an existing imagePullSecret (optional). Can itself be vault-backed.
 imagePullSecrets: []
 #  - name: registry-creds
+
+# -----------------------------------------------------------------------------
+# OpenShift ImageStream (optional, non-GitOps friendly).
+#
+# When enabled, the chart creates an ImageStream that tracks image.* from your
+# registry and adds an `image.openshift.io/triggers` annotation to the
+# Deployment. OpenShift then auto-redeploys whenever a new image is imported
+# into the stream -- this is the "image stream" workflow. Leave disabled if you
+# drive rollouts purely by changing image.tag from CI.
+# -----------------------------------------------------------------------------
+imageStream:
+  enabled: false
+  # Tag name tracked on the ImageStream (the istag the Deployment follows).
+  # Defaults to env.name when empty (e.g. example-server-qual:qual).
+  tag: ""
+  # Periodically re-import the upstream tag so re-pushes of a mutable tag are
+  # picked up automatically (needed when you re-push e.g. "latest").
+  scheduledImport: true
+  # importPolicy.importMode: Legacy (single arch) | PreserveOriginal (manifest list).
+  importMode: Legacy
+  # Set true to import from an insecure (non-TLS / self-signed) registry.
+  insecure: false
 
 replicaCount: 1
 
@@ -55,23 +92,26 @@ extraEnv: {}
 # -----------------------------------------------------------------------------
 # Secret environment variables.
 #
-# Each entry's value is a Vault reference. Use the literal token "{{vault}}"
-# as a stand-in for the per-environment Vault prefix -- the chart substitutes
-# env.vaultMount for it. This is what gives you automatic prod/qual routing:
+# Each entry's value is a Vault reference. Use the literal token "{{namespace}}"
+# as a stand-in for the per-environment segment -- the chart substitutes
+# env.namespace (default env.name) for it. This is what gives you automatic
+# prod/qual routing:
 #
 #   secretEnv:
-#     OPENAI_API_KEY: "<path:{{vault}}/example-server#openai_api_key>"
+#     OPENAI_API_KEY: "<path:secret/data/mcp/{{namespace}}/example-server#openai_api_key>"
 #
 # renders for qual as:
 #   <path:secret/data/mcp/qual/example-server#openai_api_key>
 # and for prod as:
 #   <path:secret/data/mcp/prod/example-server#openai_api_key>
 #
-# AVP resolves the <path:...> at sync time into a real Secret.
+# The legacy "{{vault}}" token (-> env.vaultMount) also still works.
+# AVP resolves the <path:...> into a real Secret -- at Argo sync time (GitOps)
+# or in your CI pipeline via `argocd-vault-plugin generate` (non-GitOps).
 # -----------------------------------------------------------------------------
 secretEnv: {}
-#  OPENAI_API_KEY: "<path:{{vault}}/example-server#openai_api_key>"
-#  DB_PASSWORD: "<path:{{vault}}/example-server#db_password>"
+#  OPENAI_API_KEY: "<path:secret/data/mcp/{{namespace}}/example-server#openai_api_key>"
+#  DB_PASSWORD: "<path:secret/data/mcp/{{namespace}}/example-server#db_password>"
 
 # -----------------------------------------------------------------------------
 # Service / networking
@@ -124,6 +164,11 @@ securityContext:
 nodeSelector: {}
 tolerations: []
 affinity: {}
+
+# Extra annotations on the POD template only. Handy to force a rollout on a
+# same-tag re-push without `oc rollout restart`, e.g. from CI:
+#   --set podAnnotations.rolloutTrigger=$CI_COMMIT_SHA
+podAnnotations: {}
 
 # Extra labels/annotations applied to all resources.
 commonLabels: {}

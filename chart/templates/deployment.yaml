@@ -4,9 +4,15 @@ metadata:
   name: {{ include "mcp-server.fullname" . }}
   labels:
     {{- include "mcp-server.labels" . | nindent 4 }}
-  {{- with .Values.commonAnnotations }}
+  {{- if or .Values.commonAnnotations .Values.imageStream.enabled }}
   annotations:
+    {{- with .Values.commonAnnotations }}
     {{- toYaml . | nindent 4 }}
+    {{- end }}
+    {{- /* OpenShift redeploys the Deployment when this istag gets a new image. */}}
+    {{- if .Values.imageStream.enabled }}
+    image.openshift.io/triggers: {{ include "mcp-server.imageTriggers" . | quote }}
+    {{- end }}
   {{- end }}
 spec:
   replicas: {{ .Values.replicaCount }}
@@ -23,6 +29,10 @@ spec:
         checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
         {{- end }}
         {{- with .Values.commonAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+        {{- /* Force a rollout on same-tag re-pushes, e.g. rolloutTrigger=$CI_COMMIT_SHA. */}}
+        {{- with .Values.podAnnotations }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
     spec:

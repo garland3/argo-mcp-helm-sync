@@ -1,0 +1,64 @@
+# =============================================================================
+# Example GitLab CI/CD pipeline for the NON-GitOps flow:
+#   build -> push image to your registry -> deploy to qual (and optionally prod)
+#
+# Copy the bits you need into your own .gitlab-ci.yml. The deploy stage renders
+# the chart and resolves Vault <path:...> tokens with the standalone
+# argocd-vault-plugin -- no Argo CD involved.
+#
+# Required CI/CD variables (Settings > CI/CD > Variables):
+#   VAULT_ADDR        e.g. https://vault.example.com
+#   AVP_TYPE          vault
+#   AVP_AUTH_TYPE     approle | token | k8s
+#   AVP_ROLE_ID       (approle) -- mark Masked
+#   AVP_SECRET_ID     (approle) -- mark Masked, Protected
+#   # or VAULT_TOKEN for AVP_AUTH_TYPE=token
+#   KUBE_CONTEXT / kubeconfig, or use the GitLab Kubernetes/agent integration
+# =============================================================================
+stages:
+  - build
+  - deploy
+
+variables:
+  IMAGE: "$CI_REGISTRY_IMAGE/mcp/example-server"
+  # Immutable, unique tag per build -> every deploy rolls automatically.
+  IMAGE_TAG: "$CI_COMMIT_SHORT_SHA"
+
+build:
+  stage: build
+  image: gcr.io/kaniko-project/executor:debug
+  script:
+    - /kaniko/executor
+      --context "$CI_PROJECT_DIR"
+      --dockerfile "$CI_PROJECT_DIR/Dockerfile"
+      --destination "$IMAGE:$IMAGE_TAG"
+
+# Reusable deploy template. The deploy image must contain helm,
+# argocd-vault-plugin, and oc/kubectl.
+.deploy:
+  stage: deploy
+  image: registry.example.com/ci/helm-avp-oc:latest
+  script:
+    - deploy/deploy.sh "$SERVER" "$ENV" "$IMAGE_TAG"
+
+deploy:qual:
+  extends: .deploy
+  variables:
+    SERVER: example-server
+    ENV: qual
+  environment:
+    name: qual
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+
+# Prod is gated behind a manual click (mirrors the GitOps "prod = manual" rule).
+deploy:prod:
+  extends: .deploy
+  variables:
+    SERVER: example-server
+    ENV: prod
+  environment:
+    name: prod
+  when: manual
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'

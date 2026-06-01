@@ -42,15 +42,30 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end -}}
 
 {{/*
-Resolve the per-environment vault prefix into a secret reference.
+The logical environment/namespace segment used inside Vault paths (e.g. the
+"qual" in secret/data/mcp/qual/...). Defaults to env.name, so you normally only
+set env.name. Override env.namespace if your Vault segment differs.
+*/}}
+{{- define "mcp-server.namespace" -}}
+{{- default .Values.env.name .Values.env.namespace -}}
+{{- end -}}
+
+{{/*
+Resolve the per-environment tokens inside a secret reference.
 Usage: {{ include "mcp-server.vaultRef" (dict "ref" $value "ctx" $) }}
-Replaces the literal token "{{vault}}" with .Values.env.vaultMount, leaving
-the resulting <path:...> for AVP to resolve at sync time.
+
+Substitutes the tokens below, leaving the resulting <path:...> for the Argo CD
+Vault Plugin to resolve -- either at Argo sync time, OR in CI via the standalone
+`argocd-vault-plugin generate` binary (the non-GitOps flow):
+
+  {{namespace}} -> env.namespace (default env.name), e.g. qual | prod
+  {{vault}}     -> env.vaultMount (full KV mount+prefix), kept for back-compat
 */}}
 {{- define "mcp-server.vaultRef" -}}
 {{- $ref := .ref -}}
+{{- $ns := include "mcp-server.namespace" .ctx -}}
 {{- $mount := .ctx.Values.env.vaultMount -}}
-{{- $ref | replace "{{vault}}" $mount -}}
+{{- $ref | replace "{{namespace}}" $ns | replace "{{vault}}" $mount -}}
 {{- end -}}
 
 {{/*
@@ -58,4 +73,23 @@ Full container image reference.
 */}}
 {{- define "mcp-server.image" -}}
 {{- printf "%s/%s:%s" .Values.image.registry .Values.image.repository (.Values.image.tag | toString) -}}
+{{- end -}}
+
+{{/*
+ImageStreamTag this server's Deployment follows, e.g. example-server-qual:qual.
+The tag defaults to env.name unless imageStream.tag overrides it.
+*/}}
+{{- define "mcp-server.imageStreamTag" -}}
+{{- $tag := default .Values.env.name .Values.imageStream.tag -}}
+{{- printf "%s:%s" (include "mcp-server.fullname" .) $tag -}}
+{{- end -}}
+
+{{/*
+OpenShift Deployment image-trigger annotation. Tells OCP to patch the
+container image whenever the tracked ImageStreamTag receives a new image.
+*/}}
+{{- define "mcp-server.imageTriggers" -}}
+{{- $container := include "mcp-server.name" . -}}
+{{- $istag := include "mcp-server.imageStreamTag" . -}}
+[{"from":{"kind":"ImageStreamTag","name":"{{ $istag }}"},"fieldPath":"spec.template.spec.containers[?(@.name==\"{{ $container }}\")].image"}]
 {{- end -}}
